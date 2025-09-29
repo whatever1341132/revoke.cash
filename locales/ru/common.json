@@ -1,12 +1,20 @@
 {
+  "article_meta": {
+    "author": "Автор <person-link>{author}</person-link>",
+    "reading_time": "{readingTime} мин. чтения",
+    "translator": "Переводчик <person-link>{translator}</person-link>"
+  },
   "buttons": {
+    "authenticate": "Аутентифицировать",
+    "authenticating": "Аутентификация",
     "back_to_exploits": "Назад к Эксплойтам",
     "cancel": "Отмена",
-    "cancel_signatures": "Отменить подписи",
+    "cancel_signatures": "Отменить потенциальные подписи",
     "cancelling": "Отмена…",
     "check": "Проверить",
     "check_connected_address": "Проверьте подключенный адрес",
     "clear_filters": "Очистить фильтры",
+    "close": "Закрыть",
     "connect": "Подключить кошелек",
     "connecting": "Подключение…",
     "disconnect": "Отключить",
@@ -15,9 +23,13 @@
     "donating": "Пожертвование",
     "download": "Скачать",
     "get_started": "Начать",
+    "increase": "Увеличить",
     "my_allowances": "Мои доступы",
+    "next": "Следующее",
+    "previous": "Предыдущее",
     "report_exploit": "Сообщить об эксплойте",
     "revoke": "Отозвать",
+    "revoke_selected": "Отозвать выбранное",
     "revoking": "Отмена",
     "send": "Отправить",
     "sending": "Отправка…",
@@ -41,7 +53,7 @@
     "title": "Подключите кошелек"
   },
   "donate": {
-    "gitcoin_grants": "Или сделайте вклад в наш <0>Gitcoin-грант</0>",
+    "donate_any_token": "Или отправьте любой токен на наш <donations-link>адрес для пожертвований </donations-link>",
     "title": "Сделайте пожертвование для Revoke.cash"
   },
   "errors": {
@@ -66,24 +78,45 @@
       "title": "Такой страницы не существует."
     },
     "messages": {
-      "chain_could_not_connect": "Не удалось подключиться к сети {{chainName}}"
+      "chain_could_not_connect": "Не удалось подключиться к {chainName}, пожалуйста, повторите попытку позже."
     }
   },
   "footer": {
-    "privacy": "Конфиденциальность",
-    "sponsors": "Спонсоры:",
-    "terms": "Условия"
+    "about": "О нас",
+    "acknowledgements": "Acknowledgements",
+    "blog": "Блог",
+    "brand_assets": "Активы бренда",
+    "community": "Сообщество",
+    "company": "Компания",
+    "domain_scanner": "Сканер доменов",
+    "donations": "Пожертвования",
+    "exploit_checker": "Проверка эксплойтов",
+    "extension": "Расширение для браузера",
+    "faq": "ЧаВо",
+    "knowledgebase": "База знаний",
+    "learn": "Учить",
+    "privacy": "Политика конфиденциальности",
+    "product": "Продукт",
+    "terms": "Условия",
+    "token_approval_checker": "Проверка одобрения токенов",
+    "what_are_token_approvals": "Что такое одобрение токенов?",
+    "what_to_do_when_scammed": "Что делать в случае мошенничества?"
   },
   "meta": {
-    "description": "Обеспечьте безопасность своего кошелька, отменив доступы к токенам, предоставленные вами в Ethereum и в более чем 40 других сетях.",
-    "title": "Отмените доступы к вашим токенам в более чем 40 сетях"
+    "description": "Верните себе контроль над своим кошельком и оставайтесь в безопасности, отменив одобренные токены и разрешения, предоставленные вами в {chainName} и более чем в 100 других сетях.",
+    "title": "Отмените доступы к вашим токенам в более чем 100 сетях"
+  },
+  "misc": {
+    "powered_by": "Работает на <powered-by-link>{name}</powered-by-link>"
   },
   "nav": {
     "about": "О нас",
+    "blog": "Блог",
     "exploits": "Эксплойты",
     "extension": "Расширение",
     "faq": "ЧаВо",
     "learn": "Учить",
+    "merchandise": "Мерч",
     "more": "Больше",
     "search": "Поиск учетных записей по адресу или домену"
   },
@@ -91,9 +124,9 @@
     "clipboard_failed": "❌ Не удалось скопировать в буфер",
     "clipboard_success": "✅ Скопировано в буфер обмена",
     "donation_sent": "💪 Спасибо за пожертвование!",
-    "revoke_failed": "❌ Отменить доступ не удалось: {{message}}",
-    "revoke_failed_revert": "❌ Отменить доступ не удалось: {{message}}. Обратитесь к команде этого токена, чтобы решить эту проблему.",
-    "transaction_failed": "❌ Сбой транзакции: {{message}}",
+    "revoke_failed": "❌ Отменить доступ не удалось: {message}",
+    "revoke_failed_revert": "❌ Это одобрение токена не может быть отозвано. Мы рекомендуем обратиться к создателям этого токена для решения проблемы.",
+    "transaction_failed": "❌ Сбой транзакции: {message}",
     "transaction_submitted": "✅ Транзакция отправлена!",
     "update_failed": "❌ Этот токен не поддерживает обновление доступов, вместо этого отмените их."
   }

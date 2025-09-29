@@ -1,11 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import { apiLogin } from 'lib/utils';
 import { HOUR } from 'lib/utils/time';
 
 export const useApiSession = () => {
-  const { data: isLoggedIn, isLoading: loggingIn } = useQuery({
+  const {
+    data: isLoggedIn,
+    isLoading: loggingIn,
+    error,
+  } = useQuery({
     queryKey: ['login'],
-    queryFn: () => axios.post('/api/login').then((res) => !!res?.data?.ok),
+    queryFn: apiLogin,
     staleTime: 12 * HOUR,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
@@ -13,5 +17,5 @@ export const useApiSession = () => {
     retry: 5,
   });
 
-  return { isLoggedIn, loggingIn };
+  return { isLoggedIn, loggingIn, error };
 };

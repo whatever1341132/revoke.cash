@@ -1,18 +1,10 @@
-import { track } from './analytics';
-import { Erc20TokenContract } from 'lib/interfaces';
-import {
-  Address,
-  Hex,
-  Signature,
-  TypedDataDomain,
-  WalletClient,
-  domainSeparator,
-  hexToSignature,
-  pad,
-  toHex,
-} from 'viem';
 import { DAI_PERMIT_ABI } from 'lib/abis';
+import { DUMMY_ADDRESS } from 'lib/constants';
+import blocksDB from 'lib/databases/blocks';
+import { type Address, type Hex, type Signature, type TypedDataDomain, type WalletClient, parseSignature } from 'viem';
 import { getWalletAddress, writeContractUnlessExcessiveGas } from '.';
+import { type TimeLog, type TokenEvent, TokenEventType } from './events';
+import { type Erc20TokenContract, type PermitTokenData, type TokenData, getPermitDomain } from './tokens';
 
 export const permit = async (
   walletClient: WalletClient,
@@ -56,67 +48,8 @@ export const permit = async (
     functionName: 'permit',
     args: [address, spender, value, deadline, Number(v), r, s],
     chain: walletClient.chain,
+    value: 0n as any as never, // Workaround for Gnosis Safe, TODO: remove when fixed
   });
-};
-
-export const getPermitDomain = async (contract: Erc20TokenContract): Promise<TypedDataDomain> => {
-  const verifyingContract = contract.address;
-  const version = getPermitDomainVersion(verifyingContract);
-
-  const chainId = contract.publicClient.chain.id;
-
-  const [name, symbol, contractDomainSeparator] = await Promise.all([
-    contract.publicClient.readContract({ ...contract, functionName: 'name' }),
-    contract.publicClient.readContract({ ...contract, functionName: 'symbol' }),
-    contract.publicClient.readContract({ ...contract, functionName: 'DOMAIN_SEPARATOR' }),
-  ]);
-  const salt = pad(toHex(chainId), { size: 32 });
-
-  // Given the potential fields of a domain, we try to find the one that matches the domain separator
-  const potentialDomains: TypedDataDomain[] = [
-    // Expected domain separators
-    { name, version, chainId, verifyingContract },
-    { name, version, verifyingContract, salt },
-    { name: symbol, version, chainId, verifyingContract },
-    { name: symbol, version, verifyingContract, salt },
-
-    // Without version
-    { name, chainId, verifyingContract },
-    { name, verifyingContract, salt },
-    { name: symbol, chainId, verifyingContract },
-    { name: symbol, verifyingContract, salt },
-
-    // Without name
-    { version, chainId, verifyingContract },
-    { version, verifyingContract, salt },
-
-    // Without name or version
-    { chainId, verifyingContract },
-    { verifyingContract, salt },
-
-    // With both chainId and salt
-    { name, version, chainId, verifyingContract, salt },
-    { name: symbol, version, chainId, verifyingContract, salt },
-  ];
-
-  const domain = potentialDomains.find((domain) => domainSeparator({ domain }) === contractDomainSeparator);
-
-  if (!domain) {
-    // If the domain separator is something else, we cannot generate a valid signature
-    track('Permit Domain Separator Mismatch', { name, verifyingContract, chainId });
-    throw new Error('Could not determine Permit Signature data');
-  }
-
-  return domain;
-};
-
-export const getPermitDomainVersion = (verifyingContract: string) => {
-  const knownDomainVersions: Record<string, string> = {
-    '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': '2', // USDC on Ethereum
-    '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1': '2', // DAI on Arbitrum and Optimism (perhaps other chains too)
-  };
-
-  return knownDomainVersions[verifyingContract] ?? '1';
 };
 
 export const signEIP2612Permit = async (
@@ -148,7 +81,7 @@ export const signEIP2612Permit = async (
     message: { owner, spender, value, nonce, deadline },
   });
 
-  return hexToSignature(signatureHex);
+  return parseSignature(signatureHex);
 };
 
 export const signDaiPermit = async (
@@ -180,5 +113,30 @@ export const signDaiPermit = async (
     message: { holder, spender, nonce, expiry, allowed },
   });
 
-  return hexToSignature(signatureHex);
+  return parseSignature(signatureHex);
+};
+
+export const getLastCancelled = async (events: TokenEvent[], token: TokenData): Promise<TimeLog | undefined> => {
+  const [lastCancelledEvent] = events.filter(
+    (event) => event.token === token.contract.address && isCancelPermitEvent(event),
+  );
+
+  if (!lastCancelledEvent) return undefined;
+
+  const lastCancelled = await blocksDB.getTimeLog(token.contract.publicClient, lastCancelledEvent.time);
+
+  return lastCancelled;
+};
+
+const isCancelPermitEvent = (event: TokenEvent) => {
+  if (event.type !== TokenEventType.APPROVAL_ERC20) return false;
+
+  const hasDummySpender = event.payload.spender === DUMMY_ADDRESS;
+  const hasZeroValue = event.payload.amount === 0n;
+
+  return hasDummySpender && hasZeroValue;
+};
+
+export const getPermitKey = (allowance: PermitTokenData) => {
+  return `permit-${allowance.chainId}-${allowance.contract.address}`;
 };

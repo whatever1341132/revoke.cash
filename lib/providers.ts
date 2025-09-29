@@ -1,10 +1,68 @@
-import axios from 'axios';
+import ky from 'lib/ky';
+import { type PublicClient, getAddress } from 'viem';
 import { RequestQueue } from './api/logs/RequestQueue';
-import type { Filter, Log } from './interfaces';
-import { PublicClient, getAddress } from 'viem';
-import { createViemPublicClientForChain, getChainLogsRpcUrl, isBackendSupportedChain } from './utils/chains';
+import { isNullish } from './utils';
+import {
+  createViemPublicClientForChain,
+  getChainLogsRpcUrl,
+  isBackendSupportedChain,
+  isCovalentSupportedChain,
+} from './utils/chains';
+import { isLogResponseSizeError } from './utils/errors';
+import type { Filter, Log } from './utils/events';
 
-export class BackendLogsProvider {
+// It is important that we get the latest block number from the same source as the logs, otherwise we may get
+// inconsistent results (e.g. if we get the latest block number from node and then request logs from Etherscan,
+// the logs may be from a different blocks)
+export interface LogsProvider {
+  chainId: number;
+  getLatestBlock(): Promise<number>;
+  getLogs(filter: Filter): Promise<Array<Log>>;
+}
+
+export class DivideAndConquerLogsProvider implements LogsProvider {
+  constructor(private underlyingProvider: LogsProvider) {}
+
+  get chainId(): number {
+    return this.underlyingProvider.chainId;
+  }
+
+  async getLatestBlock(): Promise<number> {
+    return this.underlyingProvider.getLatestBlock();
+  }
+
+  async getLogs(filter: Filter): Promise<Log[]> {
+    // We pre-emptively split the requests for Covalent-supported chains, to limit potential downsides when
+    // we potentially need to divide-and-conquer the requests down the line
+    if (isCovalentSupportedChain(this.chainId) && filter.toBlock - filter.fromBlock > 5_000_000) {
+      return this.divideAndConquer(filter, 2);
+    }
+
+    try {
+      const result = await this.underlyingProvider.getLogs(filter);
+      return result;
+    } catch (error) {
+      if (!isLogResponseSizeError(error)) throw error;
+
+      // If the block range is already a single block, we re-throw the error since we can't split it further
+      if (filter.fromBlock === filter.toBlock) throw error;
+
+      return this.divideAndConquer(filter, 2);
+    }
+  }
+
+  async divideAndConquer(filter: Filter, iterations: number): Promise<Log[]> {
+    if (iterations === 1) return this.getLogs(filter);
+
+    const middle = filter.fromBlock + Math.floor((filter.toBlock - filter.fromBlock) / 2);
+    const leftPromise = this.divideAndConquer({ ...filter, toBlock: middle }, iterations - 1);
+    const rightPromise = this.divideAndConquer({ ...filter, fromBlock: middle + 1 }, iterations - 1);
+    const [left, right] = await Promise.all([leftPromise, rightPromise]);
+    return [...left, ...right];
+  }
+}
+
+export class BackendLogsProvider implements LogsProvider {
   queue: RequestQueue;
 
   constructor(public chainId: number) {
@@ -12,27 +70,47 @@ export class BackendLogsProvider {
     this.queue = new RequestQueue(String(chainId), { interval: 200, intervalCap: 1 }, 'p-queue');
   }
 
+  async getLatestBlock(): Promise<number> {
+    const result = await this.queue.add(() =>
+      ky.get(`/api/${this.chainId}/block`, { timeout: false }).json<{ blockNumber: number }>(),
+    );
+
+    return result.blockNumber;
+  }
+
   async getLogs(filter: Filter): Promise<Log[]> {
     try {
-      const { data } = await this.queue.add(() => axios.post(`/api/${this.chainId}/logs`, filter));
-      return data;
+      return await this.queue.add(() =>
+        ky.post(`/api/${this.chainId}/logs`, { json: filter, timeout: false }).json<any>(),
+      );
     } catch (error) {
-      throw new Error(error?.response?.data?.message ?? error?.response?.data ?? error?.message);
+      throw new Error((error as any).data?.message ?? (error as any).message);
     }
   }
 }
 
-export class ViemLogsProvider {
+export class ViemLogsProvider implements LogsProvider {
   private client: PublicClient;
+  private url: string;
 
   constructor(
     public chainId: number,
     url?: string,
   ) {
-    this.client = createViemPublicClientForChain(chainId, url ?? getChainLogsRpcUrl(chainId));
+    this.url = url ?? getChainLogsRpcUrl(chainId);
+    this.client = createViemPublicClientForChain(chainId, this.url);
+  }
+
+  async getLatestBlock(): Promise<number> {
+    return Number(await this.client.getBlockNumber());
   }
 
   async getLogs(filter: Filter): Promise<Log[]> {
+    // Hypersync does not allow using `null` as a topic, so we replace it with an empty array
+    if (this.url.includes('hypersync')) {
+      filter.topics = filter.topics?.map((topic) => (isNullish(topic) ? [] : topic)) as Log['topics'];
+    }
+
     const logs = await this.client.request({
       method: 'eth_getLogs',
       params: [
@@ -54,7 +132,11 @@ export class ViemLogsProvider {
   }
 }
 
-export const getLogsProvider = (chainId: number, url?: string): BackendLogsProvider | ViemLogsProvider => {
+const getUnderlyingLogsProvider = (chainId: number): BackendLogsProvider | ViemLogsProvider => {
   if (isBackendSupportedChain(chainId)) return new BackendLogsProvider(chainId);
-  return new ViemLogsProvider(chainId, url);
+  return new ViemLogsProvider(chainId, getChainLogsRpcUrl(chainId));
+};
+
+export const getLogsProvider = (chainId: number): DivideAndConquerLogsProvider => {
+  return new DivideAndConquerLogsProvider(getUnderlyingLogsProvider(chainId));
 };

@@ -1,22 +1,39 @@
-import axios from 'axios';
-import type { Filter, Log } from 'lib/interfaces';
+import ky from 'lib/ky';
+import { isNullish, splitBlockRangeInChunks } from 'lib/utils';
 import { isRateLimitError } from 'lib/utils/errors';
+import type { Filter, Log } from 'lib/utils/events';
+import { getAddress } from 'viem';
 import type { EventGetter } from './EventGetter';
 import { RequestQueue } from './RequestQueue';
-import { getAddress } from 'viem';
 
 export class CovalentEventGetter implements EventGetter {
   private queue: RequestQueue;
 
   constructor(
-    private apiKey: string,
-    isPremium: boolean,
+    private apiKey?: string,
+    // Covalent's free tier API has a rate limit of 5 requests per second, which we underestimate to be safe
+    intervalCap: number = 4,
   ) {
-    // Covalent's premium API has a rate limit of 50 (normal = 5) requests per second, which we underestimate to be safe
-    this.queue = new RequestQueue(`covalent:${apiKey}`, { interval: 1000, intervalCap: isPremium ? 40 : 4 });
+    this.queue = new RequestQueue(`covalent:${apiKey}`, { interval: 1000, intervalCap });
+  }
+
+  async getLatestBlock(chainId: number): Promise<number> {
+    if (!this.apiKey) throw new Error('Covalent API key is not set');
+
+    const apiUrl = `https://api.covalenthq.com/v1/${chainId}/block_v2/latest/`;
+    const headers = this.getHeaders();
+    const result = await this.queue.add(() => ky.get(apiUrl, { headers, retry: 3, timeout: false }).json<any>());
+
+    const blockNumber = result?.data?.items[0]?.height;
+    if (!blockNumber) throw new Error('Failed to get latest block number');
+
+    // Covalent might still have slight delay so we subtract 20 to be safe
+    return blockNumber - 20;
   }
 
   async getEvents(chainId: number, filter: Filter): Promise<Log[]> {
+    if (!this.apiKey) throw new Error('Covalent API key is not set');
+
     const { topics, fromBlock, toBlock } = filter;
     const blockRangeChunks = splitBlockRangeInChunks([[fromBlock, toBlock]], 1e6);
 
@@ -27,33 +44,43 @@ export class CovalentEventGetter implements EventGetter {
     return filterLogs(results.flat(), filter);
   }
 
-  private async getEventsInChunk(chainId: number, fromBlock: number, toBlock: number, topics: string[]) {
-    const [mainTopic, ...secondaryTopics] = topics.filter((topic) => !!topic);
+  private async getEventsInChunk(
+    chainId: number,
+    fromBlock: number,
+    toBlock: number,
+    topics: Array<string | null>,
+  ): Promise<Log[]> {
+    const [mainTopic, ...secondaryTopics] = topics.filter((topic) => !isNullish(topic));
     const apiUrl = `https://api.covalenthq.com/v1/${chainId}/events/topics/${mainTopic}/`;
 
-    const params = {
+    const searchParams = {
       'starting-block': fromBlock === 0 ? 'earliest' : fromBlock,
       'ending-block': toBlock,
-      'secondary-topics': secondaryTopics.join(','),
       'page-size': 9999999,
+      ...(secondaryTopics.length > 0 ? { 'secondary-topics': secondaryTopics.join(',') } : {}),
     };
 
-    const auth = {
-      username: this.apiKey,
-      password: '',
-    };
+    const headers = this.getHeaders();
 
     try {
-      const result = await this.queue.add(() => axios.get(apiUrl, { params, auth }));
-      return result?.data?.data?.items?.map(formatCovalentEvent) ?? [];
+      const result = await this.queue.add(() =>
+        ky.get(apiUrl, { searchParams, headers, retry: 3, timeout: false }).json<any>(),
+      );
+      return result?.data?.items?.map(formatCovalentEvent) ?? [];
     } catch (e) {
       if (isRateLimitError(e)) {
-        console.error('Rate limit reached, retrying...');
+        console.error('Covalent: Rate limit reached, retrying...');
         return this.getEventsInChunk(chainId, fromBlock, toBlock, topics);
       }
 
-      throw new Error(e.response?.data?.error_message ?? e.message);
+      throw new Error((e as any).data?.error_message ?? (e as any).message);
     }
+  }
+
+  private getHeaders(): Record<string, string> {
+    return {
+      Authorization: `Basic ${Buffer.from(`${this.apiKey}:`).toString('base64')}`,
+    };
   }
 }
 
@@ -69,12 +96,13 @@ const formatCovalentEvent = (covalentLog: any) => ({
 });
 
 const filterLogs = (logs: Log[], filter: Filter): Log[] => {
-  const { fromBlock, toBlock } = filter;
+  const { address, fromBlock, toBlock } = filter;
   const topics = filter.topics.map((topic) => topic?.toLowerCase());
 
   const filteredLogs = logs.filter((event) => {
     if (fromBlock && event.blockNumber < fromBlock) return false;
     if (toBlock && event.blockNumber > toBlock) return false;
+    if (address && event.address !== address) return false;
     if (topics) {
       if (topics[0] && event.topics[0] !== topics[0]) return false;
       if (topics[1] && event.topics[1] !== topics[1]) return false;
@@ -86,16 +114,3 @@ const filterLogs = (logs: Log[], filter: Filter): Log[] => {
 
   return filteredLogs;
 };
-
-const splitBlockRangeInChunks = (chunks: [number, number][], chunkSize: number): [number, number][] =>
-  chunks.flatMap(([from, to]) =>
-    to - from < chunkSize
-      ? [[from, to]]
-      : splitBlockRangeInChunks(
-          [
-            [from, from + chunkSize - 1],
-            [from + chunkSize, to],
-          ],
-          chunkSize,
-        ),
-  );

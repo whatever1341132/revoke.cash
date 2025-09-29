@@ -1,6 +1,9 @@
+'use client';
+
 import { useAddressPageContext } from 'lib/hooks/page-context/AddressPageContext';
 import { getChainName } from 'lib/utils/chains';
-import useTranslation from 'next-translate/useTranslation';
+import { isCovalentError, isNetworkError, isRateLimitError, parseErrorMessage } from 'lib/utils/errors';
+import { useTranslations } from 'next-intl';
 import { useEffect } from 'react';
 
 interface Props {
@@ -8,32 +11,19 @@ interface Props {
 }
 
 const Error = ({ error }: Props) => {
-  const { t } = useTranslation();
+  const t = useTranslations();
   const { selectedChainId } = useAddressPageContext();
 
   useEffect(() => {
     console.log(error);
-  }, []);
+  }, [error]);
 
-  const chainName = getChainName(selectedChainId);
-  const chainConnectionMessage = t('common:errors.messages.chain_could_not_connect', { chainName });
-  const errorMessage = parseErrorMessage(error);
-  const message = errorMessage.includes('HTTP request failed') ? chainConnectionMessage : errorMessage;
-  return <div>Error: {message}</div>;
-};
-
-const parseErrorMessage = (error: any) => {
-  const errorMessage = error?.error?.message ?? error?.data?.message ?? error?.message ?? error;
-
-  if (typeof errorMessage === 'object') {
-    try {
-      return JSON.stringify(errorMessage);
-    } catch {
-      return String(errorMessage);
-    }
+  if (isNetworkError(error) || isRateLimitError(error) || isCovalentError(error)) {
+    const chainName = getChainName(selectedChainId);
+    return <div>Error: {t('common.errors.messages.chain_could_not_connect', { chainName })}</div>;
   }
 
-  return errorMessage;
+  return <div>Error: {parseErrorMessage(error)}</div>;
 };
 
 export default Error;

@@ -1,7 +1,7 @@
 import DropdownMenu, { DropdownMenuItem } from 'components/common/DropdownMenu';
 import { useNameLookup } from 'lib/hooks/ethereum/useNameLookup';
-import { shortenAddress } from 'lib/utils';
-import useTranslation from 'next-translate/useTranslation';
+import { shortenAddress } from 'lib/utils/formatting';
+import { useTranslations } from 'next-intl';
 import { useAccount, useDisconnect } from 'wagmi';
 import ConnectButton from './ConnectButton';
 
@@ -12,20 +12,20 @@ interface Props {
 }
 
 const WalletIndicatorDropdown = ({ size, style, className }: Props) => {
-  const { t } = useTranslation();
-  const { address: account } = useAccount();
-  const { ensName, unsName, avvyName } = useNameLookup(account);
+  const t = useTranslations();
+
+  const { address: account, chainId } = useAccount();
+  const { domainName } = useNameLookup(account);
   const { disconnect } = useDisconnect();
-  const domainName = ensName ?? unsName ?? avvyName;
 
   return (
     <div className="flex whitespace-nowrap">
       {account ? (
         <DropdownMenu menuButton={domainName ?? shortenAddress(account, 4)}>
-          <DropdownMenuItem href={`/address/${account}`} router>
-            {t('common:buttons.my_allowances')}
+          <DropdownMenuItem href={`/address/${account}?chainId=${chainId}`} router retainSearchParams={['chainId']}>
+            {t('common.buttons.my_allowances')}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => disconnect()}>{t('common:buttons.disconnect')}</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => disconnect()}>{t('common.buttons.disconnect')}</DropdownMenuItem>
         </DropdownMenu>
       ) : (
         <ConnectButton size={size} style={style} className={className} redirect />

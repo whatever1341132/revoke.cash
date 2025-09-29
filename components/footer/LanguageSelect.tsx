@@ -1,20 +1,23 @@
+'use client';
+
 import Logo from 'components/common/Logo';
-import Select from 'components/common/Select';
-import { useColorTheme } from 'lib/hooks/useColorTheme';
-import { track } from 'lib/utils/analytics';
-import useTranslation from 'next-translate/useTranslation';
-import { useRouter } from 'next/router';
-import { FormatOptionLabelMeta } from 'react-select';
+import Select from 'components/common/select/Select';
+import type { Locale } from 'lib/i18n/config';
+import { useCsrRouter } from 'lib/i18n/csr-navigation';
+import { usePathname } from 'lib/i18n/navigation';
+import analytics from 'lib/utils/analytics';
+import { useLocale } from 'next-intl';
+import type { FormatOptionLabelMeta } from 'react-select';
 
 interface Option {
-  value: string;
+  value: Locale;
   name: string;
 }
 
 const LanguageSelect = () => {
-  const { asPath, replace } = useRouter();
-  const { lang } = useTranslation();
-  const { darkMode } = useColorTheme();
+  const router = useCsrRouter();
+  const path = usePathname();
+  const locale = useLocale();
 
   const options: Option[] = [
     { value: 'en', name: 'English' },
@@ -32,10 +35,10 @@ const LanguageSelect = () => {
   };
 
   const selectLanguage = (option: Option) => {
-    const locale = option.value;
-    track('Changed language', { from: lang, to: locale });
-    replace(asPath, undefined, { locale, scroll: false });
-    persistLocaleCookie(locale);
+    const newLocale = option.value;
+    analytics.track('Changed language', { from: locale, to: newLocale });
+    router.replace(path, { locale: newLocale, scroll: false, showProgress: false, retainSearchParams: ['chainId'] });
+    persistLocaleCookie(newLocale);
   };
 
   const displayOption = (option: Option, { context }: FormatOptionLabelMeta<Option>) => {
@@ -43,7 +46,7 @@ const LanguageSelect = () => {
     const src = `/assets/images/flags/${option.value}.svg`;
     return (
       <div className="flex gap-1 items-center">
-        <Logo src={src} alt={option.name} size={16} border className={context === 'value' ? 'border-white' : ''} />
+        <Logo src={src} alt={option.name} size={16} border className="border-white" />
         <div>{option.name}</div>
       </div>
     );
@@ -54,15 +57,14 @@ const LanguageSelect = () => {
       instanceId="language-select"
       aria-label="Select Language"
       className="w-32"
-      controlTheme="dark"
-      menuTheme={darkMode ? 'dark' : 'light'}
-      value={options.find((option) => option.value === lang)}
+      theme="dark"
+      value={options.find((option) => option.value === locale)}
       options={options}
-      onChange={selectLanguage}
+      onChange={(option) => selectLanguage(option!)}
       formatOptionLabel={displayOption}
       menuPlacement="top"
       isSearchable={false}
-      size="md"
+      isMulti={false}
     />
   );
 };

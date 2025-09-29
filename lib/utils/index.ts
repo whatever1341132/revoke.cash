@@ -1,105 +1,51 @@
-import type { Balance, Filter, Log, LogsProvider } from 'lib/interfaces';
-import type { Translate } from 'next-translate';
+import { ChainId } from '@revoke.cash/chains';
+import type { Delegation } from 'lib/delegations/DelegatePlatform';
+import type { TransactionSubmitted } from 'lib/interfaces';
+import ky from 'lib/ky';
+import type { getTranslations } from 'next-intl/server';
 import { toast } from 'react-toastify';
-import { isLogResponseSizeError } from './errors';
-import { resolveAvvyName, resolveEnsName, resolveUnsName } from './whois';
 import {
-  Abi,
-  Address,
-  ContractFunctionConfig,
-  FormattedTransactionRequest,
-  GetValue,
-  Hex,
-  PublicClient,
-  WalletClient,
+  type Address,
+  type EstimateContractGasParameters,
+  type Hash,
+  type Hex,
+  type PublicClient,
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
+  type WalletClient,
+  type WriteContractParameters,
   getAddress,
   pad,
   slice,
 } from 'viem';
-import { Chain } from 'wagmi';
-import { UnionOmit } from 'viem/dist/types/types/utils';
-import { ChainId } from '@revoke.cash/chains';
-import { track } from './analytics';
+import analytics from './analytics';
+import type { Log } from './events';
 
-export const shortenAddress = (address?: string, characters: number = 6): string => {
-  return address && `${address.substr(0, 2 + characters)}...${address.substr(address.length - characters, characters)}`;
+export const assertFulfilled = <T>(item: PromiseSettledResult<T>): item is PromiseFulfilledResult<T> => {
+  return item.status === 'fulfilled';
 };
 
-export const shortenString = (name?: string, maxLength: number = 16): string | undefined => {
-  if (!name) return undefined;
-  if (name.length <= maxLength) return name;
-  return `${name.substr(0, maxLength - 3).trim()}...`;
+export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const isNullish = (value: unknown): value is null | undefined => {
+  return value === null || value === undefined;
 };
 
-export const toFloat = (n: bigint, decimals: number = 0): string => {
-  const full = (Number(n) / 10 ** decimals).toFixed(18).replace(/\.?0+$/, ''); // TODO: formatUnits
+export const delegationEquals = (a: Delegation, b: Delegation): boolean => {
+  // Handle null/undefined cases
+  if (isNullish(a) || isNullish(b)) return false;
+  if (isNullish(a.delegator) || isNullish(a.delegate)) return false;
+  if (isNullish(b.delegator) || isNullish(b.delegate)) return false;
 
-  const MAX_DISPLAY_DECIMALS = 3;
-  const tooSmallPrefix = `0.${'0'.repeat(MAX_DISPLAY_DECIMALS)}`; // 3 decimals -> '0.000'
-  const tooSmallReplacement = `< ${tooSmallPrefix.replace(/.$/, '1')}`; // 3 decimals -> '< 0.001'
-  const rounded = Number(full)
-    .toFixed(MAX_DISPLAY_DECIMALS)
-    .replace(/\.?0+$/, '');
-
-  return full.startsWith(tooSmallPrefix) ? tooSmallReplacement : rounded;
-};
-
-export const fromFloat = (floatString: string, decimals: number): bigint => {
-  const sides = floatString.split('.');
-  if (sides.length === 1) return BigInt(floatString.padEnd(decimals + floatString.length, '0'));
-  if (sides.length > 2) return 0n;
-
-  const numberAsString =
-    sides[1].length > decimals ? sides[0] + sides[1].slice(0, decimals) : sides[0] + sides[1].padEnd(decimals, '0');
-
-  return BigInt(numberAsString);
-};
-
-export const getLogs = async (logsProvider: LogsProvider, filter: Filter): Promise<Log[]> => {
-  try {
-    const result = await logsProvider.getLogs(filter);
-    return result;
-  } catch (error) {
-    if (!isLogResponseSizeError(error)) throw error;
-
-    // If the block range is already a single block, we re-throw the error since we can't split it further
-    if (filter.fromBlock === filter.toBlock) throw error;
-
-    const middle = filter.fromBlock + Math.floor((filter.toBlock - filter.fromBlock) / 2);
-    const leftPromise = getLogs(logsProvider, { ...filter, toBlock: middle });
-    const rightPromise = getLogs(logsProvider, { ...filter, fromBlock: middle + 1 });
-    const [left, right] = await Promise.all([leftPromise, rightPromise]);
-    return [...left, ...right];
-  }
-};
-
-export const parseInputAddress = async (inputAddressOrName: string): Promise<Address | undefined> => {
-  // If the input is an ENS name, validate it, resolve it and return it
-  if (inputAddressOrName.endsWith('.eth')) {
-    return await resolveEnsName(inputAddressOrName);
-  }
-
-  // If the input is an Avvy Domains name..
-  if (inputAddressOrName.endsWith('.avax')) {
-    return await resolveAvvyName(inputAddressOrName);
-  }
-
-  // Other domain-like inputs are interpreted as Unstoppable Domains
-  if (inputAddressOrName.includes('.')) {
-    return await resolveUnsName(inputAddressOrName);
-  }
-
-  // If the input is an address, validate it and return it
-  try {
-    return getAddress(inputAddressOrName.toLowerCase());
-  } catch {
-    return undefined;
-  }
-};
-
-export const getBalanceText = (symbol: string, balance: Balance, decimals?: number) => {
-  if (balance === 'ERC1155') return `(ERC1155)`;
-  return `${toFloat(BigInt(balance), decimals)} ${symbol}`;
+  return (
+    a.delegator === b.delegator &&
+    a.delegate === b.delegate &&
+    a.type === b.type &&
+    a.contract === b.contract &&
+    a.tokenId === b.tokenId &&
+    a.platform === b.platform &&
+    a.direction === b.direction
+  );
 };
 
 export const topicToAddress = (topic: Hex) => getAddress(slice(topic, 12));
@@ -117,16 +63,41 @@ export const logSorterChronological = (a: Log, b: Log) => {
 
 export const sortLogsChronologically = (logs: Log[]) => logs.sort(logSorterChronological);
 
-export const deduplicateArray = <T>(array: T[], matcher: (a: T, b: T) => boolean = (a, b) => a === b): T[] => {
-  return array.filter((a, i) => array.findIndex((b) => matcher(a, b)) === i);
+export const sortTokenEventsChronologically = <T extends { rawLog: Log }>(events: T[]): T[] =>
+  events.sort((a, b) => logSorterChronological(a.rawLog, b.rawLog));
+
+// This is O(n) complexity because Set.has() and Set.add() are O(1), which is much faster than the previous
+// iterations of this function, which were O(n^2) and later O(n*m). This doesn't matter for most cases, but for
+// our calculate-potential-losses script, it makes a huge difference because we might be dealing with deduplicating
+// 1m+ logs.
+export const deduplicateArray = <T>(
+  array: readonly T[],
+  keyGenerator: (item: T) => string = (item) => `${item}`,
+): T[] => {
+  const seen = new Set<string>();
+  const result: T[] = [];
+
+  for (const item of array) {
+    const key = keyGenerator(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+
+  return result;
 };
 
 export const deduplicateLogsByTopics = (logs: Log[], consideredIndexes: Array<0 | 1 | 2 | 3> = [0, 1, 2, 3]) => {
-  const matcher = (a: Log, b: Log) => {
-    return a.address === b.address && consideredIndexes.every((index) => a.topics[index] === b.topics[index]);
+  const keyGenerator = (log: Log) => {
+    const topicsKey = log.topics
+      .map((topic, index) => (consideredIndexes.includes(index as 0 | 1 | 2 | 3) ? topic : 'ignored'))
+      .join('-');
+
+    return `${log.address}-${topicsKey}`;
   };
 
-  return deduplicateArray(logs, matcher);
+  return deduplicateArray(logs, keyGenerator);
 };
 
 export const filterLogsByAddress = (logs: Log[], address: string) => {
@@ -139,14 +110,19 @@ export const filterLogsByTopics = (logs: Log[], topics: string[]) => {
   });
 };
 
-export const writeToClipBoard = (text: string, t: Translate, displayToast: boolean = true) => {
+export const writeToClipBoard = (
+  text: string,
+  t: Awaited<ReturnType<typeof getTranslations<string>>>,
+  displayToast: boolean = true,
+) => {
   if (typeof navigator === 'undefined' || !navigator?.clipboard?.writeText) {
-    toast.info(t('common:toasts.clipboard_failed'), { autoClose: 1000 });
+    toast.info(t('common.toasts.clipboard_failed'), { autoClose: 1000 });
   }
 
   navigator.clipboard.writeText(text);
+
   if (displayToast) {
-    toast.info(t('common:toasts.clipboard_success'), { autoClose: 1000 });
+    toast.info(t('common.toasts.clipboard_success'), { autoClose: 1000 });
   }
 };
 
@@ -155,21 +131,26 @@ export const normaliseLabel = (label: string) => {
 };
 
 export const getWalletAddress = async (walletClient: WalletClient) => {
-  const [address] = await walletClient.requestAddresses();
+  const [address] = await walletClient.getAddresses();
   return address;
 };
 
 export const throwIfExcessiveGas = (chainId: number, address: Address, estimatedGas: bigint) => {
   // Some networks do weird stuff with gas estimation, so "normal" transactions have much higher gas limits.
-  const WEIRD_NETWORKS = [
-    ChainId.ZkSyncEraMainnet,
-    ChainId.ZkSyncEraTestnet,
-    ChainId.ArbitrumOne,
-    ChainId.ArbitrumGoerli,
-    ChainId.ArbitrumNova,
-  ];
+  const gasFactors: Record<number, bigint> = {
+    [ChainId.ArbitrumOne]: 20n,
+    [ChainId.ArbitrumNova]: 20n,
+    [ChainId.ArbitrumSepolia]: 20n,
+    [ChainId.FrameTestnet]: 20n,
+    [ChainId.Mantle]: 2_000n,
+    [ChainId.MantleTestnet]: 2_000n,
+    [5031]: 10n, // Somnia
+    [ChainId.ZkSyncMainnet]: 20n,
+    [ChainId.ZkSyncSepoliaTestnet]: 20n,
+    [ChainId.ZERONetwork]: 20n,
+  };
 
-  const EXCESSIVE_GAS = WEIRD_NETWORKS.includes(chainId) ? 10_000_000n : 500_000n;
+  const EXCESSIVE_GAS = 500_000n * (gasFactors[chainId] ?? 1n);
 
   // TODO: Translate this error message
   if (estimatedGas > EXCESSIVE_GAS) {
@@ -177,7 +158,7 @@ export const throwIfExcessiveGas = (chainId: number, address: Address, estimated
 
     // Track excessive gas usage so we can blacklist tokens
     // TODO: Use a different tool than analytics for this
-    track('Excessive gas limit', { chainId, address, estimatedGas: estimatedGas.toString() });
+    analytics.track('Excessive gas limit', { chainId, address, estimatedGas: estimatedGas.toString() });
 
     throw new Error(
       'This transaction has an excessive gas cost. It is most likely a spam token, so you do not need to revoke this approval.',
@@ -185,26 +166,98 @@ export const throwIfExcessiveGas = (chainId: number, address: Address, estimated
   }
 };
 
-export const writeContractUnlessExcessiveGas = async <
-  TAbi extends Abi | readonly unknown[] = Abi,
-  TFunctionName extends string = string,
->(
-  publicCLient: PublicClient,
+export const writeContractUnlessExcessiveGas = async (
+  publicClient: PublicClient,
   walletClient: WalletClient,
-  transactionRequest: ContractTransactionRequest<TAbi, TFunctionName>,
+  transactionRequest: WriteContractParameters,
 ) => {
-  const estimatedGas = await publicCLient.estimateContractGas(transactionRequest);
+  const estimatedGas =
+    transactionRequest.gas ??
+    (await publicClient.estimateContractGas(transactionRequest as EstimateContractGasParameters));
   throwIfExcessiveGas(transactionRequest.chain!.id, transactionRequest.address, estimatedGas);
   return walletClient.writeContract({ ...transactionRequest, gas: estimatedGas });
 };
 
-// This is as "simple" as I was able to get this generic to be, considering it needs to work with viem's type inference
-type ContractTransactionRequest<
-  TAbi extends Abi | readonly unknown[] = Abi,
-  TFunctionName extends string = string,
-> = ContractFunctionConfig<TAbi, TFunctionName, 'payable' | 'nonpayable'> & {
-  account: Address;
-  chain: Chain;
-  dataSuffix?: Hex;
-} & UnionOmit<FormattedTransactionRequest<Chain>, 'from' | 'to' | 'data' | 'value'> &
-  GetValue<TAbi, TFunctionName>;
+export const waitForTransactionConfirmation = async (hash: Hash, publicClient: PublicClient) => {
+  try {
+    return await publicClient.waitForTransactionReceipt({ hash });
+  } catch (e) {
+    // Workaround for Safe Apps, somehow they don't return the transaction receipt -- TODO: remove when fixed
+    if (e instanceof TransactionNotFoundError || e instanceof TransactionReceiptNotFoundError) return;
+    throw e;
+  }
+};
+
+export const waitForSubmittedTransactionConfirmation = async (
+  transactionSubmitted?: TransactionSubmitted | Promise<TransactionSubmitted | undefined>,
+) => {
+  const transaction = await transactionSubmitted;
+  return transaction?.confirmation ?? null;
+};
+
+export const splitBlockRangeInChunks = (chunks: [number, number][], chunkSize: number): [number, number][] =>
+  chunks.flatMap(([from, to]) =>
+    to - from < chunkSize
+      ? [[from, to]]
+      : splitBlockRangeInChunks(
+          [
+            [from, from + chunkSize - 1],
+            [from + chunkSize, to],
+          ],
+          chunkSize,
+        ),
+  );
+
+// Normalise risk factors to match the format of other risk data sources (TODO: Remove once this is live and whois sources are updated)
+export const normaliseRiskData = (riskData: any, sourceOverride: string) => {
+  if (!riskData) return null;
+
+  const riskFactors = (riskData?.riskFactors ?? []).map((riskFactor: any) => {
+    if (typeof riskFactor === 'string') {
+      const [type, source] = riskFactor.includes('blocklist_') ? riskFactor.split('_') : [riskFactor, sourceOverride];
+      return { type, source };
+    }
+    return riskFactor;
+  });
+
+  const exploitRiskFactors = (riskData?.exploits ?? []).flatMap((exploit: string) => {
+    if (typeof exploit === 'string') {
+      return [{ type: 'exploit', source: sourceOverride, data: exploit }];
+    }
+    return [];
+  });
+
+  return { ...riskData, riskFactors: [...riskFactors, ...exploitRiskFactors] };
+};
+
+export const range = (length: number) => Array.from({ length }, (_, i) => i);
+
+export const apiLogin = async () => {
+  // In a backend context, we do not need to login
+  if (!isBrowser()) return true;
+
+  return ky
+    .post('/api/login')
+    .json<any>()
+    .then((res) => !!res?.ok);
+};
+
+export const isBrowser = () => typeof window !== 'undefined';
+
+export type AccountType = 'EOA' | 'EIP7702 Account' | 'Smart Contract';
+export const getAccountType = async (address: Address, publicClient: PublicClient): Promise<AccountType> => {
+  const code = await publicClient.getCode({ address });
+  if (isNullish(code) || code === '0x') return 'EOA';
+  if (code.startsWith('0xef0100')) return 'EIP7702 Account';
+  return 'Smart Contract';
+};
+
+export const splitArray = <T>(array: T[], chunkSize: number): T[][] => {
+  const result: T[][] = [];
+
+  for (let i = 0; i < array.length; i += chunkSize) {
+    result.push(array.slice(i, i + chunkSize));
+  }
+
+  return result;
+};

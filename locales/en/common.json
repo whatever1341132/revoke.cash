@@ -1,12 +1,20 @@
 {
+  "article_meta": {
+    "author": "Written by <person-link>{author}</person-link>",
+    "reading_time": "{readingTime} min read",
+    "translator": "Translated by <person-link>{translator}</person-link>"
+  },
   "buttons": {
+    "authenticate": "Authenticate",
+    "authenticating": "Authenticating",
     "back_to_exploits": "Back to Exploits",
     "cancel": "Cancel",
-    "cancel_signatures": "Cancel Signatures",
+    "cancel_signatures": "Cancel Potential Signatures",
     "cancelling": "Cancelling",
     "check": "Check",
     "check_connected_address": "Check Connected Address",
     "clear_filters": "Clear Filters",
+    "close": "Close",
     "connect": "Connect Wallet",
     "connecting": "Connecting",
     "disconnect": "Disconnect",
@@ -15,9 +23,13 @@
     "donating": "Donating",
     "download": "Download",
     "get_started": "Get Started",
+    "increase": "Increase",
     "my_allowances": "My Approvals",
+    "next": "Next",
+    "previous": "Previous",
     "report_exploit": "Report Exploit",
     "revoke": "Revoke",
+    "revoke_selected": "Revoke Selected",
     "revoking": "Revoking",
     "send": "Send",
     "sending": "Sending",
@@ -41,7 +53,7 @@
     "title": "Connect Your Wallet"
   },
   "donate": {
-    "gitcoin_grants": "Or contribute to our <0>Gitcoin Grant</0>",
+    "donate_any_token": "Or send any token to our <donations-link>donations address</donations-link>",
     "title": "Donate to Revoke.cash"
   },
   "errors": {
@@ -66,24 +78,45 @@
       "title": "This page does not exist."
     },
     "messages": {
-      "chain_could_not_connect": "Could not connect to the {{chainName}} network"
+      "chain_could_not_connect": "Could not connect to {chainName}, please try again later."
     }
   },
   "footer": {
-    "privacy": "Privacy",
-    "sponsors": "Sponsors:",
-    "terms": "Terms"
+    "about": "About Us",
+    "acknowledgements": "Acknowledgements",
+    "blog": "Blog",
+    "brand_assets": "Brand Assets",
+    "community": "Community",
+    "company": "Company",
+    "domain_scanner": "Domain Scanner",
+    "donations": "Donations",
+    "exploit_checker": "Exploit Checker",
+    "extension": "Browser Extension",
+    "faq": "FAQ",
+    "knowledgebase": "Knowledgebase",
+    "learn": "Learn",
+    "privacy": "Privacy Policy",
+    "product": "Product",
+    "terms": "Terms",
+    "token_approval_checker": "Token Approval Checker",
+    "what_are_token_approvals": "What Are Token Approvals?",
+    "what_to_do_when_scammed": "What to Do When Scammed?"
   },
   "meta": {
-    "description": "Take back control of your wallet and stay safe by revoking token approvals and permissions you granted on Ethereum and over 40 other networks.",
-    "title": "Revoke Your Token Approvals on Over 40 Networks"
+    "description": "Take back control of your wallet and stay safe by revoking token approvals and permissions you granted on {chainName} and over 100 other networks.",
+    "title": "Revoke Your Token Approvals on Over 100 Networks"
+  },
+  "misc": {
+    "powered_by": "Powered by <powered-by-link>{name}</powered-by-link>"
   },
   "nav": {
     "about": "About Us",
+    "blog": "Blog",
     "exploits": "Exploits",
     "extension": "Extension",
     "faq": "FAQ",
     "learn": "Learn",
+    "merchandise": "Merchandise",
     "more": "More",
     "search": "Search Accounts by Address or Domain"
   },
@@ -91,9 +124,9 @@
     "clipboard_failed": "❌ Couldn't copy to clipboard",
     "clipboard_success": "✅ Copied to clipboard",
     "donation_sent": "💪 Thanks for the donation!",
-    "revoke_failed": "❌ Revoking failed: {{message}}",
-    "revoke_failed_revert": "❌ Revoking failed: {{message}}. Please reach out to this token's team to resolve this issue.",
-    "transaction_failed": "❌ Transaction failed: {{message}}",
+    "revoke_failed": "❌ Revoking failed: {message}",
+    "revoke_failed_revert": "❌ This token approval cannot be revoked. We recommend reaching out to the creators of this token to resolve the issue.",
+    "transaction_failed": "❌ Transaction failed: {message}",
     "transaction_submitted": "✅ Transaction submitted!",
     "update_failed": "❌ This token does not support updating approvals, please revoke instead."
   }

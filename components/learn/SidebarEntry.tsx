@@ -1,4 +1,4 @@
-import { ISidebarEntry } from 'lib/interfaces';
+import type { ISidebarEntry } from 'lib/interfaces';
 import SidebarLink from './SidebarLink';
 import SidebarSection from './SidebarSection';
 
@@ -9,10 +9,10 @@ interface Props {
 }
 
 const SidebarEntry = ({ title, path, children }: Props) => {
-  if (children && children.length > 0) {
+  if (children) {
     return (
-      <SidebarSection title={title} path={path} href={children[0].path}>
-        {children.map((child) => (
+      <SidebarSection title={title} path={path} href={path}>
+        {children?.map((child) => (
           <SidebarEntry key={child.path} {...child} />
         ))}
       </SidebarSection>

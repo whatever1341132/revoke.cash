@@ -1,11 +1,19 @@
-import { chains } from '@revoke.cash/chains';
 import { writeFileSync } from 'fs';
-import { getChainName } from 'lib/utils/chains';
 import { join } from 'path';
+import { allChains, getChain } from '@revoke.cash/chains';
+import { getChainName } from 'lib/utils/chains';
 
-const path = join(__dirname, 'chainid-lookup.csv');
-const lookupCsvValues = Object.keys(chains.all())
-  .map((chainId) => `${chainId},${getChainName(Number(chainId))}`)
+const lookupName = (chainId: number) => {
+  try {
+    return getChainName(chainId);
+  } catch (error) {
+    return getChain(chainId)?.name;
+  }
+};
+
+const path = join(__dirname, 'data', `chainid-lookup-${new Date().toISOString().split('T')[0]}.csv`);
+const lookupCsvValues = Object.keys(allChains())
+  .map((chainId) => `${chainId},${lookupName(Number(chainId))}`)
   .join('\n');
 const lookupCsvHeader = 'chainId,chainName';
 const lookupCsv = `${lookupCsvHeader}\n${lookupCsvValues}`;

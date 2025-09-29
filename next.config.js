@@ -1,38 +1,27 @@
 const withBundleAnalyzer = require('next-bundle-analyzer')({ enabled: process.env.ANALYZE === 'true' });
-const nextTranslate = require('next-translate-plugin');
+const withNextIntl = require('next-intl/plugin')('./lib/i18n/config.tsx');
+const withNextCircularDeps = require('next-circular-dependency');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   productionBrowserSourceMaps: true,
-  rewrites: async () => {
-    return [
-      {
-        source: '/privacy-policy',
-        destination: '/privacy-policy.html',
-      },
-    ];
-  },
+  exclude: /a\.js|node_modules/, // exclude node_modules for checking circular dependencies
   redirects: async () => {
     return [
+      {
+        source: '/:locale(en|es|ja|ru|zh)/faq',
+        destination: '/:locale/learn/faq',
+        permanent: true,
+      },
       {
         source: '/faq',
         destination: '/learn/faq',
         permanent: true,
       },
       {
-        source: '/learn/basics',
-        destination: '/learn/basics/what-is-a-crypto-wallet',
-        permanent: true,
-      },
-      {
-        source: '/learn/approvals',
-        destination: '/learn/approvals/what-are-token-approvals',
-        permanent: true,
-      },
-      {
-        source: '/learn/wallets',
-        destination: '/learn/wallets/add-network/ethereum',
+        source: '/:locale(en|es|ja|ru|zh)/learn/wallets/add-network',
+        destination: '/:locale/learn/wallets/add-network/ethereum',
         permanent: true,
       },
       {
@@ -53,10 +42,28 @@ const nextConfig = {
       },
     ];
   },
-  webpack: (config) => {
-    config.resolve.fallback = { fs: false };
+  webpack: (config, { isServer }) => {
+    config.resolve.fallback = { fs: false, path: false };
+    config.externals.push('pino-pretty');
+
+    // We're running into issues with webpack when importing the hypersync client directly
+    if (isServer) {
+      config.externals.push(({ request }, callback) => {
+        if (request?.startsWith('@envio-dev/hypersync-client-') || request?.endsWith('.node')) {
+          return callback(null, `commonjs ${request}`);
+        }
+        callback();
+      });
+    }
+
     return config;
   },
 };
 
-module.exports = withBundleAnalyzer(nextTranslate(nextConfig));
+module.exports = nextConfig;
+module.exports = withNextIntl(module.exports);
+module.exports = withBundleAnalyzer(module.exports);
+
+if (process.env.CHECK_CIRCULAR_DEPS) {
+  module.exports = withNextCircularDeps(module.exports);
+}

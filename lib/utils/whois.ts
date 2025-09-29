@@ -1,147 +1,152 @@
-import { Resolution } from '@unstoppabledomains/resolution';
-import axios from 'axios';
-import { OPENSEA_REGISTRY_ABI } from 'lib/abis';
-import { ADDRESS_ZERO, DATA_BASE_URL, ETHEREUM_LISTS_CONTRACTS, OPENSEA_REGISTRY_ADDRESS } from 'lib/constants';
-import { SpenderData } from 'lib/interfaces';
-import { Address, getAddress } from 'viem';
+import { ChainId } from '@revoke.cash/chains';
+import { AVVY_DOMAINS_ABI, OPENSEA_REGISTRY_ABI, UNSTOPPABLE_DOMAINS_ABI } from 'lib/abis';
+import {
+  ADDRESS_ZERO,
+  ALCHEMY_API_KEY,
+  AVVY_DOMAINS_ADDRESS,
+  OPENSEA_REGISTRY_ADDRESS,
+  UNSTOPPABLE_DOMAINS_ETH_ADDRESS,
+  UNSTOPPABLE_DOMAINS_POLYGON_ADDRESS,
+} from 'lib/constants';
+import type { Nullable, SpenderData, SpenderRiskData } from 'lib/interfaces';
+import { AggregateSpenderDataSource, AggregationType } from 'lib/whois/spender/AggregateSpenderDataSource';
+import { BackendSpenderDataSource } from 'lib/whois/spender/BackendSpenderDataSource';
+import { type Address, type PublicClient, getAddress, isAddress } from 'viem';
+import { namehash, normalize } from 'viem/ens';
 import { createViemPublicClientForChain } from './chains';
-import AVVY from '@avvy/client';
-import { providers } from 'ethers';
+import { unstoppableTlds } from './unstoppableTlds';
 
-export const GLOBAL_ETH_MAINNET_CLIENT = createViemPublicClientForChain(
-  1,
-  `https://eth-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`,
-);
+// Note that we do not use the official UD or Avvy resolution libraries below because they are big and use Ethers.js
 
-export const ENS_RESOLUTION = GLOBAL_ETH_MAINNET_CLIENT;
-
-export const UNS_RESOLUTION =
-  process.env.NEXT_PUBLIC_ALCHEMY_API_KEY &&
-  new Resolution({
-    sourceConfig: {
-      uns: {
-        locations: {
-          Layer1: {
-            url: `https://eth-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`,
-            network: 'mainnet',
-          },
-          Layer2: {
-            url: `https://polygon-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`,
-            network: 'polygon-mainnet',
-          },
-        },
-      },
-    },
-  });
-
-export const AVVY_RESOLUTION = new AVVY(new providers.JsonRpcProvider('https://api.avax.network/ext/bc/C/rpc'), {});
+const GlobalClients = {
+  ETHEREUM: createViemPublicClientForChain(
+    ChainId.EthereumMainnet,
+    `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+  )!,
+  POLYGON: createViemPublicClientForChain(
+    ChainId.PolygonMainnet,
+    `https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+  )!,
+  AVALANCHE: createViemPublicClientForChain(ChainId['AvalancheC-Chain'], 'https://api.avax.network/ext/bc/C/rpc')!,
+} as const;
 
 export const getSpenderData = async (
-  address: string,
-  chainId?: number,
-  openseaProxyAddress?: string,
-): Promise<SpenderData | null> => {
-  if (!chainId) return null;
+  address: Address,
+  chainId: number,
+): Promise<Nullable<SpenderData | SpenderRiskData>> => {
+  const source = new AggregateSpenderDataSource({
+    aggregationType: AggregationType.PARALLEL_COMBINED,
+    sources: [new BackendSpenderDataSource()],
+  });
+
+  return source.getSpenderData(address, chainId);
+};
+
+export const lookupEnsName = async (address?: Address): Promise<string | null> => {
   if (!address) return null;
-  if (address === openseaProxyAddress) return { name: 'OpenSea (old)' };
-
-  // Request dapplist and ethereumlists in parallel since they're both just GitHub repos
-  const internalPromise = getSpenderDataFromInternal(address, chainId);
-  const ethereumListsPromise = getSpenderDataFromEthereumList(address, chainId);
-
-  // Check Harpie only if the other two sources don't have a name, because this is a rate-limited API
-  const data =
-    (await internalPromise) ?? (await ethereumListsPromise) ?? (await getSpenderDataFromHarpie(address, chainId));
-
-  return data;
-};
-
-const getSpenderDataFromInternal = async (address: string, chainId: number): Promise<SpenderData | null> => {
-  try {
-    const { data } = await axios.get(`${DATA_BASE_URL}/spenders/${chainId}/${getAddress(address)}.json`);
-    return data;
-  } catch {
-    return null;
-  }
-};
-
-const getSpenderDataFromEthereumList = async (address: string, chainId: number): Promise<SpenderData | null> => {
-  try {
-    const contractRes = await axios.get(`${ETHEREUM_LISTS_CONTRACTS}/contracts/${chainId}/${getAddress(address)}.json`);
-
-    try {
-      const projectRes = await axios.get(`${ETHEREUM_LISTS_CONTRACTS}/projects/${contractRes.data.project}.json`);
-      return { name: projectRes.data.name };
-    } catch {}
-
-    return { name: contractRes.data.project };
-  } catch {
-    return null;
-  }
-};
-
-const getSpenderDataFromHarpie = async (address: string, chainId: number): Promise<SpenderData | null> => {
-  const apiKey = process.env.NEXT_PUBLIC_HARPIE_API_KEY;
-  if (!apiKey || chainId !== 1) return null;
 
   try {
-    const { data } = await axios.post('https://api.harpie.io/getprotocolfromcontract', { apiKey, address });
-    if (!data?.contractOwner || data?.contractOwner === 'NO_DATA') return null;
-    return { name: data.contractOwner };
-  } catch (e) {
-    return null;
-  }
-};
-
-export const lookupEnsName = async (address: Address): Promise<string | null> => {
-  try {
-    const name = await ENS_RESOLUTION?.getEnsName({ address });
+    const name = await GlobalClients.ETHEREUM?.getEnsName({ address });
     return name ?? null;
   } catch {
     return null;
   }
 };
 
-export const resolveEnsName = async (name: string): Promise<Address | null> => {
+export const resolveEnsName = async (name?: string): Promise<Address | null> => {
+  if (!name) return null;
+
   try {
-    const address = await ENS_RESOLUTION?.getEnsAddress({ name });
+    const address = await GlobalClients.ETHEREUM?.getEnsAddress({ name: normalize(name) });
     return address ?? null;
   } catch {
     return null;
   }
 };
 
-export const lookupUnsName = async (address: Address) => {
+export const lookupUnsName = async (address?: Address): Promise<string | null> => {
+  if (!address) return null;
+
+  const lookupUnsNameOnClient = (client: PublicClient, contractAddress: Address) =>
+    client.readContract({
+      abi: UNSTOPPABLE_DOMAINS_ABI,
+      address: contractAddress,
+      functionName: 'reverseNameOf',
+      args: [address],
+    });
+
   try {
-    const name = await UNS_RESOLUTION?.reverse(address);
-    return name ?? null;
+    const results = await Promise.allSettled([
+      lookupUnsNameOnClient(GlobalClients.ETHEREUM, UNSTOPPABLE_DOMAINS_ETH_ADDRESS),
+      lookupUnsNameOnClient(GlobalClients.POLYGON, UNSTOPPABLE_DOMAINS_POLYGON_ADDRESS),
+    ]);
+
+    for (const result of results) {
+      if (result?.status === 'fulfilled' && result.value) return result.value.toLowerCase();
+    }
+
+    return null;
   } catch {
     return null;
   }
 };
 
-export const resolveUnsName = async (unsName: string): Promise<Address | null> => {
+export const resolveUnsName = async (unsName?: string): Promise<Address | null> => {
+  if (!unsName) return null;
+
+  const resolveUnsNameOnClient = (client: PublicClient, contractAddress: Address) =>
+    client.readContract({
+      abi: UNSTOPPABLE_DOMAINS_ABI,
+      address: contractAddress,
+      functionName: 'getMany',
+      args: [['crypto.ETH.address'], BigInt(namehash(unsName))],
+    });
+
   try {
-    const address = await UNS_RESOLUTION?.addr(unsName, 'ETH');
-    return address ? getAddress(address?.toLowerCase()) : null;
+    const results = await Promise.allSettled([
+      resolveUnsNameOnClient(GlobalClients.ETHEREUM, UNSTOPPABLE_DOMAINS_ETH_ADDRESS).then((result) => result?.[0]),
+      resolveUnsNameOnClient(GlobalClients.POLYGON, UNSTOPPABLE_DOMAINS_POLYGON_ADDRESS).then((result) => result?.[0]),
+    ]);
+
+    for (const result of results) {
+      if (result?.status === 'fulfilled' && result.value) return getAddress(result.value.toLowerCase());
+    }
+
+    return null;
   } catch {
     return null;
   }
 };
 
-export const lookupAvvyName = async (address: Address) => {
+export const lookupAvvyName = async (address?: Address): Promise<Nullable<string>> => {
+  if (!address) return null;
+
   try {
-    const hash = await AVVY_RESOLUTION?.reverse((AVVY.RECORDS as any).EVM, address);
-    const { name } = await hash.lookup();
+    const name = await GlobalClients.AVALANCHE.readContract({
+      abi: AVVY_DOMAINS_ABI,
+      address: AVVY_DOMAINS_ADDRESS,
+      functionName: 'reverseResolveEVMToName',
+      args: [address],
+    });
+
     return name || null;
   } catch (err) {
     return null;
   }
 };
 
-export const resolveAvvyName = async (avvyName: string): Promise<Address | null> => {
+export const resolveAvvyName = async (avvyName?: string): Promise<Address | null> => {
+  if (!avvyName) return null;
+
   try {
-    return await AVVY_RESOLUTION?.name(avvyName).resolve((AVVY.RECORDS as any).EVM);
+    const address = await GlobalClients.AVALANCHE.readContract({
+      abi: AVVY_DOMAINS_ABI,
+      address: AVVY_DOMAINS_ADDRESS,
+      functionName: 'resolveStandard',
+      args: [avvyName, 3n],
+    });
+
+    return getAddress(address?.toLowerCase()) || null;
   } catch (err) {
     return null;
   }
@@ -161,7 +166,7 @@ export const lookupDomainName = async (address: Address) => {
 
 export const getOpenSeaProxyAddress = async (userAddress: Address): Promise<Address | null> => {
   try {
-    const proxyAddress = await GLOBAL_ETH_MAINNET_CLIENT.readContract({
+    const proxyAddress = await GlobalClients.ETHEREUM.readContract({
       address: OPENSEA_REGISTRY_ADDRESS,
       abi: OPENSEA_REGISTRY_ABI,
       functionName: 'proxies',
@@ -173,4 +178,33 @@ export const getOpenSeaProxyAddress = async (userAddress: Address): Promise<Addr
   } catch {
     return null;
   }
+};
+
+export const parseInputAddress = async (inputAddressOrName: string): Promise<Address | null> => {
+  const sanitisedInput = inputAddressOrName.trim().toLowerCase();
+  const parts = sanitisedInput.split('.');
+  const tld = parts.length > 1 ? parts.pop() : null;
+
+  if (tld) {
+    // Avvy Domains
+    if (tld === 'avax') return resolveAvvyName(sanitisedInput);
+    // Unstoppable Domains
+    if (unstoppableTlds.includes(tld)) return resolveUnsName(sanitisedInput);
+    // Treat anything else as a potential ENS name, which include .eth and all DNS domains
+    return resolveEnsName(sanitisedInput);
+  }
+
+  // If the input is a valid address, return it
+  if (isAddress(sanitisedInput)) return getAddress(sanitisedInput);
+
+  // If the input is not a valid address, return null
+  return null;
+};
+
+export const getAddressAndDomainName = async (addressOrName: string) => {
+  const address = await parseInputAddress(addressOrName.toLowerCase());
+  const isName = addressOrName.toLowerCase() !== address?.toLowerCase();
+  const domainName = isName ? addressOrName : await lookupDomainName(address);
+
+  return { address, domainName };
 };
